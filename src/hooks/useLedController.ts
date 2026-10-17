@@ -100,7 +100,7 @@ export function useLedController() {
   const [schedules, setSchedules] = useState<ScheduleItem[]>(INITIAL_SCHEDULES);
   const [sleepRemainingSeconds, setSleepRemainingSeconds] = useState<number | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [sensitivity, setSensitivity] = useState(65);
+  const [sensitivity, setSensitivity] = useState(95);
   const [rgbChannelOrder, setRgbChannelOrder] = useState<RgbChannelOrder>(() => {
     try {
       const saved = localStorage.getItem('chroma-pulse-rgb-channel-order');
@@ -113,7 +113,20 @@ export function useLedController() {
   }, [rgbChannelOrder]);
 
   const activeDevice = devices.find((d) => d.id === activeDeviceId) || devices[0];
+  const devicesRef = useRef(devices);
+  devicesRef.current = devices;
   const lastBleStreamTime = useRef<number>(0);
+  const lastMusicPacketTime = useRef<number>(0);
+  const musicHue = useRef(205);
+  const musicSyncInitialized = useRef(false);
+  const lastMusicCallbackAt = useRef(0);
+  const lastBassBeatAt = useRef(0);
+  const lastMusicIdleChangeAt = useRef(0);
+  const musicColorFrom = useRef<RgbColor>({ r: 99, g: 102, b: 241 });
+  const musicColorTarget = useRef<RgbColor>({ r: 99, g: 102, b: 241 });
+  const musicColorCurrent = useRef<RgbColor>({ r: 99, g: 102, b: 241 });
+  const musicTransitionStartedAt = useRef(0);
+  const musicTransitionDuration = useRef(0);
 
   useEffect(() => {
     try {
@@ -330,30 +343,76 @@ export function useLedController() {
   // Audio Reactivity Callback
   const handleAudioBeat = useCallback(
     (analysis: AudioAnalysis) => {
-      if (!masterPower) return;
+      if (!masterPower || !activeDeviceId) return;
+      const now = performance.now();
+      const active = devicesRef.current.find((device) => device.id === activeDeviceId);
+      if (!musicSyncInitialized.current || now - lastMusicCallbackAt.current > 1000) {
+        const initialColor = active?.color || { r: 99, g: 102, b: 241 };
+        musicColorFrom.current = initialColor;
+        musicColorTarget.current = initialColor;
+        musicColorCurrent.current = initialColor;
+        musicTransitionStartedAt.current = now;
+        musicTransitionDuration.current = 0;
+        lastBassBeatAt.current = now;
+        lastMusicIdleChangeAt.current = now;
+        musicSyncInitialized.current = true;
+      }
+      lastMusicCallbackAt.current = now;
+
+      const beginColorTransition = (nextColor: RgbColor, duration: number) => {
+        musicColorFrom.current = musicColorCurrent.current;
+        musicColorTarget.current = nextColor;
+        musicTransitionStartedAt.current = now;
+        musicTransitionDuration.current = duration;
+      };
 
       if (analysis.isBeat) {
-        setDevices((current) =>
-          current.map((dev) => {
-            if (dev.power) {
-              const boost = Math.min(100, Math.round(dev.brightness * 1.3));
-              return { ...dev, brightness: boost };
-            }
-            return dev;
-          })
+        lastBassBeatAt.current = now;
+        lastMusicIdleChangeAt.current = now;
+        musicHue.current = (musicHue.current + 37) % 360;
+        beginColorTransition(
+          hsvToRgb({ h: musicHue.current, s: 88, v: Math.round(65 + Math.min(1, analysis.bass) * 35) }),
+          0
         );
+      } else if (
+        now - lastBassBeatAt.current >= 2500
+        && (lastMusicIdleChangeAt.current === lastBassBeatAt.current || now - lastMusicIdleChangeAt.current >= 5200)
+      ) {
+        lastMusicIdleChangeAt.current = now;
+        musicHue.current = (musicHue.current + 58) % 360;
+        beginColorTransition(hsvToRgb({ h: musicHue.current, s: 82, v: 82 }), 4500);
+      }
 
-        setTimeout(() => {
-          setDevices((current) =>
-            current.map((dev) => ({
-              ...dev,
-              brightness: activeDevice.brightness,
-            }))
-          );
-        }, 90);
+      const progress = musicTransitionDuration.current > 0
+        ? Math.min(1, (now - musicTransitionStartedAt.current) / musicTransitionDuration.current)
+        : 1;
+      const eased = progress * progress * (3 - 2 * progress);
+      const from = musicColorFrom.current;
+      const target = musicColorTarget.current;
+      const color: RgbColor = {
+        r: Math.round(from.r + (target.r - from.r) * eased),
+        g: Math.round(from.g + (target.g - from.g) * eased),
+        b: Math.round(from.b + (target.b - from.b) * eased),
+      };
+      const changed = Math.max(
+        Math.abs(color.r - musicColorCurrent.current.r),
+        Math.abs(color.g - musicColorCurrent.current.g),
+        Math.abs(color.b - musicColorCurrent.current.b)
+      ) >= 2;
+      musicColorCurrent.current = color;
+      if (changed && now - lastMusicPacketTime.current >= 60) {
+        lastMusicPacketTime.current = now;
+        devicesRef.current.forEach((device) => {
+          if ((device.id === activeDeviceId || allSynced) && device.power && device.isRealBluetooth && device.bleCharacteristic) {
+            sendLotusPacket(device.bleCharacteristic, buildLotusPacket('color', color.r, color.g, color.b, rgbChannelOrder));
+          }
+        });
+        setDevices((current) => current.map((device) =>
+          (device.id === activeDeviceId || allSynced) && device.power ? { ...device, color } : device
+        ));
       }
     },
-    [masterPower, activeDevice.brightness]
+    [masterPower, activeDeviceId, allSynced, rgbChannelOrder]
   );
 
   // Sleep Timer Tick
@@ -654,8 +713,53 @@ export function useLedController() {
 
   // Add / Remove Devices
   const addDevice = useCallback((dev: LedDevice) => {
-    setDevices((curr) => [...curr, dev]);
-  }, []);
+    const currentDevices = devicesRef.current;
+    const existingBluetoothCount = currentDevices.filter((device) => device.isRealBluetooth).length;
+    const shouldAutoSync = Boolean(dev.isRealBluetooth && existingBluetoothCount > 0);
+    if (!shouldAutoSync) {
+      setDevices((current) => [...current, dev]);
+      return;
+    }
+
+    const syncSource = currentDevices.find((device) => device.id === activeDeviceId) || currentDevices[0] || dev;
+    const syncedNewDevice = {
+      ...dev,
+      color: syncSource.color,
+      brightness: syncSource.brightness,
+      modeId: syncSource.modeId,
+      speed: syncSource.speed,
+    };
+    setAllSynced(true);
+    setDevices((current) => [
+      ...current.map((device) => ({
+        ...device,
+        color: syncSource.color,
+        brightness: syncSource.brightness,
+        modeId: syncSource.modeId,
+        speed: syncSource.speed,
+      })),
+      syncedNewDevice,
+    ]);
+
+    broadcastBlePacket('color', syncSource.color.r, syncSource.color.g, syncSource.color.b);
+    broadcastBlePacket('brightness', syncSource.brightness);
+    if (syncedNewDevice.bleCharacteristic) {
+      sendLotusPacket(
+        syncedNewDevice.bleCharacteristic,
+        buildLotusPacket('color', syncSource.color.r, syncSource.color.g, syncSource.color.b, rgbChannelOrder)
+      );
+      sendLotusPacket(syncedNewDevice.bleCharacteristic, buildLotusPacket('brightness', syncSource.brightness));
+    }
+    const mode = syncSource.modeId === null ? undefined : LOTUS_MODES.find((item) => item.id === syncSource.modeId);
+    if (mode && !mode.isSoftwareEngine) {
+      broadcastBlePacket('mode', syncSource.modeId!);
+      broadcastBlePacket('speed', syncSource.speed);
+      if (syncedNewDevice.bleCharacteristic) {
+        sendLotusPacket(syncedNewDevice.bleCharacteristic, buildLotusPacket('mode', syncSource.modeId!));
+        sendLotusPacket(syncedNewDevice.bleCharacteristic, buildLotusPacket('speed', syncSource.speed));
+      }
+    }
+  }, [activeDeviceId, broadcastBlePacket, rgbChannelOrder]);
 
   const removeDevice = useCallback(
     (id: string) => {

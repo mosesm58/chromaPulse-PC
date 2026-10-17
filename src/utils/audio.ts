@@ -5,6 +5,7 @@ export interface AudioAnalysis {
   overall: number; // 0-1
   isBeat: boolean;
   frequencyData: Uint8Array;
+  waveformData: Uint8Array;
 }
 
 class AudioManager {
@@ -16,27 +17,39 @@ class AudioManager {
   private audioElement: HTMLAudioElement | null = null;
   private audioSource: MediaElementAudioSourceNode | null = null;
   private dataArray: Uint8Array | null = null;
+  private waveformArray: Uint8Array | null = null;
   private lastBeatTime: number = 0;
   private energyHistory: number[] = [];
+  private previousBassLevel: number = 0;
 
   private initContext() {
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       this.ctx = new AudioCtx();
     }
-    if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
-    }
     if (!this.analyser) {
       this.analyser = this.ctx.createAnalyser();
-      this.analyser.fftSize = 256;
-      this.analyser.smoothingTimeConstant = 0.8;
+      this.analyser.fftSize = 2048;
+      this.analyser.smoothingTimeConstant = 0.18;
       this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+      this.waveformArray = new Uint8Array(this.analyser.fftSize);
+    }
+  }
+
+  public async prepare(): Promise<boolean> {
+    this.initContext();
+    if (!this.ctx) return false;
+    try {
+      if (this.ctx.state === 'suspended') await this.ctx.resume();
+      return this.ctx.state === 'running';
+    } catch (error) {
+      console.warn('Audio context could not be resumed:', error);
+      return false;
     }
   }
 
   public async startMicrophone(): Promise<boolean> {
-    this.initContext();
+    await this.prepare();
     if (!this.ctx || !this.analyser) return false;
 
     try {
@@ -53,6 +66,7 @@ class AudioManager {
 
   public bindAudioElement(element: HTMLAudioElement) {
     this.initContext();
+    void this.prepare();
     if (!this.ctx || !this.analyser) return;
 
     if (this.audioElement !== element) {
@@ -71,8 +85,8 @@ class AudioManager {
     }
   }
 
-  public bindDisplayAudio(stream: MediaStream) {
-    this.initContext();
+  public async bindDisplayAudio(stream: MediaStream): Promise<boolean> {
+    await this.prepare();
     if (!this.ctx || !this.analyser || !stream.getAudioTracks().length) return false;
     this.displaySource?.disconnect();
     this.displaySource = this.ctx.createMediaStreamSource(stream);
@@ -91,6 +105,9 @@ class AudioManager {
     }
     this.displaySource?.disconnect();
     this.displaySource = null;
+    this.energyHistory = [];
+    this.previousBassLevel = 0;
+    this.lastBeatTime = 0;
   }
 
   public getAnalysis(sensitivity: number = 50): AudioAnalysis {
@@ -101,56 +118,56 @@ class AudioManager {
       overall: 0,
       isBeat: false,
       frequencyData: new Uint8Array(128),
+      waveformData: new Uint8Array(256).fill(128),
     };
 
-    if (!this.analyser || !this.dataArray) {
+    if (!this.analyser || !this.dataArray || !this.waveformArray) {
       return defaultRes;
     }
 
     this.analyser.getByteFrequencyData(this.dataArray as any);
+    this.analyser.getByteTimeDomainData(this.waveformArray as any);
 
     const length = this.dataArray.length;
-    const factor = (sensitivity / 50) * 1.2;
+    const binHz = (this.ctx?.sampleRate || 48000) / (this.analyser.fftSize || 2048);
+    const bandLevel = (minHz: number, maxHz: number, exponent: number) => {
+      const first = Math.max(1, Math.floor(minHz / binHz));
+      const last = Math.min(length, Math.ceil(maxHz / binHz));
+      let sum = 0;
+      for (let i = first; i < last; i++) sum += this.dataArray![i];
+      const count = Math.max(1, last - first);
+      return Math.min(1, Math.pow(sum / (count * 255), exponent));
+    };
 
-    // Split frequency spectrum into bass (0-15%), mid (15-60%), treble (60-100%)
-    let bassSum = 0;
-    const bassCount = Math.floor(length * 0.15);
-    for (let i = 0; i < bassCount; i++) {
-      bassSum += this.dataArray[i];
-    }
-    const bass = Math.min(1, (bassSum / (bassCount * 255)) * factor);
-
-    let midSum = 0;
-    const midStart = bassCount;
-    const midEnd = Math.floor(length * 0.6);
-    const midCount = midEnd - midStart;
-    for (let i = midStart; i < midEnd; i++) {
-      midSum += this.dataArray[i];
-    }
-    const mid = Math.min(1, (midSum / (midCount * 255)) * factor);
-
-    let trebleSum = 0;
-    const trebleCount = length - midEnd;
-    for (let i = midEnd; i < length; i++) {
-      trebleSum += this.dataArray[i];
-    }
-    const treble = Math.min(1, (trebleSum / (trebleCount * 255)) * factor);
+    // Use actual frequency ranges so bass, mids, and treble map consistently across devices.
+    const bass = bandLevel(35, 180, 0.68);
+    const mid = bandLevel(250, 4000, 0.72);
+    const treble = bandLevel(4000, Math.min(16000, (this.ctx?.sampleRate || 48000) / 2), 0.72);
 
     const overall = (bass * 0.5 + mid * 0.35 + treble * 0.15);
 
     // Peak Beat detector
     const now = performance.now();
     let isBeat = false;
-    this.energyHistory.push(bass);
-    if (this.energyHistory.length > 30) {
-      this.energyHistory.shift();
-    }
-    const avgEnergy = this.energyHistory.reduce((a, b) => a + b, 0) / this.energyHistory.length;
-
-    if (bass > avgEnergy * 1.35 && bass > 0.3 && now - this.lastBeatTime > 220) {
+    const history = [...this.energyHistory].sort((a, b) => a - b);
+    const baseline = history.length ? history[Math.floor((history.length - 1) * 0.25)] : 0;
+    const bassRise = bass - this.previousBassLevel;
+    const sensitivity01 = Math.max(0, Math.min(1, (sensitivity - 10) / 90));
+    const thresholdFloor = 0.07 - sensitivity01 * 0.052;
+    const baselineMultiplier = 1.58 - sensitivity01 * 0.52;
+    const riseThreshold = 0.028 - sensitivity01 * 0.024;
+    const refractoryMs = 270 - sensitivity01 * 80;
+    if (
+      bass >= Math.max(thresholdFloor, baseline * baselineMultiplier)
+      && bassRise >= riseThreshold
+      && now - this.lastBeatTime > refractoryMs
+    ) {
       isBeat = true;
       this.lastBeatTime = now;
     }
+    this.energyHistory.push(bass);
+    if (this.energyHistory.length > 60) this.energyHistory.shift();
+    this.previousBassLevel = bass;
 
     return {
       bass,
@@ -159,6 +176,7 @@ class AudioManager {
       overall,
       isBeat,
       frequencyData: this.dataArray,
+      waveformData: this.waveformArray,
     };
   }
 }
