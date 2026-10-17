@@ -7,12 +7,15 @@ let ambilightTimer = null;
 let ambilightWindow = null;
 let ambilightRunId = 0;
 let lastAmbilightColor = null;
+let lastAmbilightSampleAt = 0;
 ipcMain.handle('ambilight:start', async (event) => {
   const runId = ++ambilightRunId;
   ambilightWindow = BrowserWindow.fromWebContents(event.sender);
   if (ambilightTimer) clearTimeout(ambilightTimer);
   ambilightTimer = null;
   lastAmbilightColor = null;
+  lastAmbilightSampleAt = 0;
+
   const sample = async () => {
     if (runId !== ambilightRunId || !ambilightWindow || ambilightWindow.isDestroyed()) return;
     try {
@@ -28,7 +31,6 @@ ipcMain.handle('ambilight:start', async (event) => {
       const colors = new Map();
       let totalR = 0, totalG = 0, totalB = 0, pixels = 0;
       for (let i = 0; i < data.length; i += 4) {
-        // NativeImage.toBitmap is BGRA on Windows.
         const b = data[i], g = data[i + 1], r = data[i + 2];
         const key = `${r >> 4},${g >> 4},${b >> 4}`;
         const bucket = colors.get(key) || { count: 0, r: 0, g: 0, b: 0 };
@@ -40,30 +42,35 @@ ipcMain.handle('ambilight:start', async (event) => {
         totalR += r; totalG += g; totalB += b; pixels++;
       }
       if (runId !== ambilightRunId || !ambilightWindow || ambilightWindow.isDestroyed()) return;
-      let dominant = [...colors.values()].sort((a, b) => b.count - a.count)[0];
+      const dominant = [...colors.values()].sort((a, b) => b.count - a.count)[0];
       let color = dominant && dominant.count > pixels * 0.04
         ? { r: Math.round(dominant.r / dominant.count), g: Math.round(dominant.g / dominant.count), b: Math.round(dominant.b / dominant.count) }
         : { r: Math.round(totalR / pixels), g: Math.round(totalG / pixels), b: Math.round(totalB / pixels) };
+      const sampleTime = Date.now();
       if (lastAmbilightColor) {
+        const elapsedMs = Math.max(1, sampleTime - lastAmbilightSampleAt);
+        const blend = 1 - Math.exp(-elapsedMs / 300);
         color = {
-          r: Math.round(lastAmbilightColor.r * 0.3 + color.r * 0.7),
-          g: Math.round(lastAmbilightColor.g * 0.3 + color.g * 0.7),
-          b: Math.round(lastAmbilightColor.b * 0.3 + color.b * 0.7),
+          r: Math.round(lastAmbilightColor.r + (color.r - lastAmbilightColor.r) * blend),
+          g: Math.round(lastAmbilightColor.g + (color.g - lastAmbilightColor.g) * blend),
+          b: Math.round(lastAmbilightColor.b + (color.b - lastAmbilightColor.b) * blend),
         };
       }
       const changed = !lastAmbilightColor
-        || Math.max(Math.abs(color.r - lastAmbilightColor.r), Math.abs(color.g - lastAmbilightColor.g), Math.abs(color.b - lastAmbilightColor.b)) >= 4;
+        || Math.max(Math.abs(color.r - lastAmbilightColor.r), Math.abs(color.g - lastAmbilightColor.g), Math.abs(color.b - lastAmbilightColor.b)) >= 2;
       lastAmbilightColor = color;
+      lastAmbilightSampleAt = sampleTime;
       if (changed) ambilightWindow.webContents.send('ambilight:color', color);
     } catch (error) {
       console.warn('Ambilight screen sampling failed:', error);
       if (runId === ambilightRunId && !lastAmbilightColor) throw error;
     } finally {
       if (runId === ambilightRunId && ambilightWindow && !ambilightWindow.isDestroyed()) {
-        ambilightTimer = setTimeout(sample, 250);
+        ambilightTimer = setTimeout(sample, 100);
       }
     }
   };
+
   try {
     await sample();
   } catch (error) {
@@ -73,6 +80,7 @@ ipcMain.handle('ambilight:start', async (event) => {
       ambilightTimer = null;
       ambilightWindow = null;
       lastAmbilightColor = null;
+      lastAmbilightSampleAt = 0;
     }
     throw error;
   }
@@ -84,6 +92,7 @@ ipcMain.handle('ambilight:stop', () => {
   ambilightTimer = null;
   ambilightWindow = null;
   lastAmbilightColor = null;
+  lastAmbilightSampleAt = 0;
   return true;
 });
 
@@ -100,7 +109,11 @@ app.whenReady().then(() => {
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
       if (!sources.length) return callback(null);
-      callback({ video: sources[0], ...(request.audioRequested ? { audio: 'loopback' } : {}) });
+      const primaryDisplayId = String(screen.getPrimaryDisplay().id);
+      const source = sources.find((item) => item.display_id === primaryDisplayId)
+        || sources.find((item) => item.id.startsWith(`screen:${primaryDisplayId}:`))
+        || sources[0];
+      callback({ video: source, ...(request.audioRequested ? { audio: 'loopback' } : {}) });
     } catch {
       callback(null);
     }

@@ -34,10 +34,10 @@ export const MicTab: React.FC<MicTabProps> = ({ onScreenColor }) => {
 
   const start = async () => {
     try {
-      if (!window.ambilightCapture) throw new Error('Direct screen capture is only available in the desktop app.');
+      if (!window.ambilightCapture) throw new Error('Screen capture is available in the desktop app only.');
       await window.ambilightCapture.start();
       setSharing(true);
-      setMessage('Following the primary display. No screen-share picker is needed.');
+      setMessage('Following the primary display.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not capture the primary display.');
     }
@@ -53,18 +53,29 @@ export const MicTab: React.FC<MicTabProps> = ({ onScreenColor }) => {
 
   useEffect(() => () => { void window.ambilightCapture?.stop(); }, []);
 
-  return <div className="space-y-5">
-    <div className="app-card rounded-2xl border p-6 space-y-4">
-      <div className="flex items-center justify-between gap-4">
-        <div><h2 className="font-semibold text-white">Screen Ambilight</h2><p className="text-sm text-slate-400 mt-1">LED color follows the dominant color on the primary display.</p></div>
-        <button onClick={sharing ? stop : start} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white flex items-center gap-2">
-          {sharing ? <MonitorOff size={16}/> : <Monitor size={16}/>} {sharing ? 'Stop Ambilight' : 'Start Ambilight'}
-        </button>
-      </div>
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-slate-400">{message}</p>
-        {currentColor && <div className="flex items-center gap-2 text-xs text-slate-400"><span className="h-4 w-4 rounded-full border border-white/30" style={{ backgroundColor: rgbToHex(currentColor) }} /><span className="font-mono">{rgbToHex(currentColor).toUpperCase()}</span></div>}
+  return (
+    <div className="space-y-5">
+      <div className="app-card rounded-2xl border p-6 space-y-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="font-semibold text-white">Screen Ambilight</h2>
+            <p className="text-sm text-slate-400 mt-1">LED color follows the dominant color on the primary display.</p>
+          </div>
+          <button onClick={sharing ? stop : start} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white flex items-center gap-2">
+            {sharing ? <MonitorOff size={16} /> : <Monitor size={16} />}
+            {sharing ? 'Stop Ambilight' : 'Start Ambilight'}
+          </button>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-slate-400">{message}</p>
+          {currentColor && (
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <span className="h-4 w-4 rounded-full border border-white/30" style={{ backgroundColor: rgbToHex(currentColor) }} />
+              <span className="font-mono">{rgbToHex(currentColor).toUpperCase()}</span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
-  </div>;
+  );
 };
