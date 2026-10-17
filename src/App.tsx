@@ -78,6 +78,8 @@ export default function App() {
     addDevice,
     removeDevice,
     toggleDeviceHardwareType,
+    rgbChannelOrder,
+    setRgbChannelOrder,
   } = useLedController();
 
   const { isInstallable, install } = usePWAInstall();
@@ -208,6 +210,8 @@ export default function App() {
         onSelectDevice={setActiveDeviceId}
         onToggleHardwareType={toggleDeviceHardwareType}
         masterPower={masterPower}
+        rgbChannelOrder={rgbChannelOrder}
+        onRgbChannelOrderChange={setRgbChannelOrder}
       />
 
       {/* 2. Main Body Split: Collapsible Left Sidebar + Central Work Area */}

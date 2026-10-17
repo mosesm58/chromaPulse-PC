@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LOTUS_MODES } from '../data/modes';
-import { ActiveTab, DynamicMode, LedDevice, RgbColor, ScheduleItem } from '../types/led';
+import { ActiveTab, DynamicMode, LedDevice, RgbChannelOrder, RgbColor, ScheduleItem } from '../types/led';
 import { AudioAnalysis } from '../utils/audio';
 import { buildLotusPacket, sendLotusPacket } from '../utils/bluetooth';
 import { hexToRgb, hsvToRgb } from '../utils/color';
@@ -101,6 +101,16 @@ export function useLedController() {
   const [sleepRemainingSeconds, setSleepRemainingSeconds] = useState<number | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [sensitivity, setSensitivity] = useState(65);
+  const [rgbChannelOrder, setRgbChannelOrder] = useState<RgbChannelOrder>(() => {
+    try {
+      const saved = localStorage.getItem('chroma-pulse-rgb-channel-order');
+      return saved && ['RGB', 'RBG', 'GRB', 'GBR', 'BRG', 'BGR'].includes(saved) ? saved as RgbChannelOrder : 'RGB';
+    } catch { return 'RGB'; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('chroma-pulse-rgb-channel-order', rgbChannelOrder); } catch { /* Storage can be disabled. */ }
+  }, [rgbChannelOrder]);
 
   const activeDevice = devices.find((d) => d.id === activeDeviceId) || devices[0];
   const lastBleStreamTime = useRef<number>(0);
@@ -146,14 +156,14 @@ export function useLedController() {
   // Transmit real Bluetooth packets if device has BLE characteristic
   const broadcastBlePacket = useCallback(
     (type: 'power' | 'color' | 'brightness' | 'mode' | 'speed', val1: number, val2?: number, val3?: number) => {
-      const packet = buildLotusPacket(type, val1, val2, val3);
+      const packet = buildLotusPacket(type, val1, val2, val3, rgbChannelOrder);
       devices.forEach((dev) => {
         if (dev.isRealBluetooth && dev.bleCharacteristic) {
           sendLotusPacket(dev.bleCharacteristic, packet);
         }
       });
     },
-    [devices]
+    [devices, rgbChannelOrder]
   );
 
   // Master Power Toggle
@@ -614,7 +624,7 @@ export function useLedController() {
             if ((dev.id === activeDeviceId || allSynced) && dev.isRealBluetooth && dev.bleCharacteristic && dev.power) {
               sendLotusPacket(
                 dev.bleCharacteristic,
-                buildLotusPacket('color', targetColor.r, targetColor.g, targetColor.b)
+                buildLotusPacket('color', targetColor.r, targetColor.g, targetColor.b, rgbChannelOrder)
               );
             }
           });
@@ -623,7 +633,7 @@ export function useLedController() {
     }, intervalMs);
 
     return () => clearInterval(interval);
-  }, [masterPower, activeDevice.modeId, activeDevice.speed, activeDeviceId, devices]);
+  }, [masterPower, activeDevice.modeId, activeDevice.speed, activeDeviceId, devices, rgbChannelOrder]);
 
   // Toggle between Whole-Strip (single color at a time) and Addressable (multi-color IC)
   const toggleDeviceHardwareType = useCallback(
@@ -718,5 +728,7 @@ export function useLedController() {
     addDevice,
     removeDevice,
     toggleDeviceHardwareType,
+    rgbChannelOrder,
+    setRgbChannelOrder,
   };
 }

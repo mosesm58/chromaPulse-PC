@@ -1,5 +1,18 @@
-const { app, BrowserWindow, session, desktopCapturer, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, session, desktopCapturer, ipcMain, screen, Tray, Menu, nativeImage } = require('electron');
 const path = require('node:path');
+
+let appTray = null;
+let mainWindow = null;
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+ipcMain.on('app:minimize-to-tray', () => mainWindow?.hide());
+ipcMain.on('app:quit', () => app.quit());
 
 app.commandLine.appendSwitch('enable-experimental-web-platform-features');
 
@@ -97,7 +110,6 @@ ipcMain.handle('ambilight:stop', () => {
 });
 
 app.whenReady().then(() => {
-  const { Menu } = require('electron');
   Menu.setApplicationMenu(null);
   // Grant Bluetooth chooser access from the app window when requested.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
@@ -125,8 +137,23 @@ app.whenReady().then(() => {
     minWidth: 1000,
     minHeight: 700,
     title: 'Chroma Pulse',
-    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false }
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
   });
+  mainWindow = win;
+  const trayIconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(__dirname, '..', 'build', 'icon.ico');
+  const trayIcon = nativeImage.createFromPath(trayIconPath);
+  appTray = new Tray(trayIcon);
+  appTray.setToolTip('Chroma Pulse');
+  appTray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Chroma Pulse', click: showMainWindow },
+    { type: 'separator' },
+    { label: 'Quit', click: () => app.quit() },
+  ]));
+  appTray.on('click', showMainWindow);
+  appTray.on('double-click', showMainWindow);
+  win.on('closed', () => { if (mainWindow === win) mainWindow = null; });
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   let pendingBluetoothCallback = null;
   let bluetoothScanInProgress = false;
@@ -150,4 +177,9 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('before-quit', () => {
+  if (appTray) {
+    appTray.destroy();
+    appTray = null;
+  }
+});

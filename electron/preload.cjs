@@ -9,3 +9,8 @@ contextBridge.exposeInMainWorld('ambilightCapture', {
     return () => ipcRenderer.removeListener('ambilight:color', listener);
   },
 });
+
+contextBridge.exposeInMainWorld('chromaDesktop', {
+  minimizeToTray: () => ipcRenderer.send('app:minimize-to-tray'),
+  quit: () => ipcRenderer.send('app:quit'),
+});

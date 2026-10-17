@@ -1,4 +1,4 @@
-import { RgbColor, WebBluetoothCharacteristic, WebBluetoothDevice } from '../types/led';
+import { RgbChannelOrder, RgbColor, WebBluetoothCharacteristic, WebBluetoothDevice } from '../types/led';
 
 // Common Bluetooth Low Energy Service & Characteristic UUIDs used by Lotus Lantern & ELK-BLEDOM LED controllers
 export const BLE_SERVICES = [
@@ -18,7 +18,7 @@ export const BLE_WRITE_CHARACTERISTICS = [
  * Encodes commands into Lotus Lantern 7E Protocol byte frames (9 bytes)
  * Format: 0x7E [Length] [Command] [Params...] 0xEF
  */
-export function buildLotusPacket(type: 'power' | 'color' | 'brightness' | 'mode' | 'speed', val1: number, val2?: number, val3?: number): Uint8Array {
+export function buildLotusPacket(type: 'power' | 'color' | 'brightness' | 'mode' | 'speed', val1: number, val2?: number, val3?: number, channelOrder: RgbChannelOrder = 'RGB'): Uint8Array {
   const packet = new Uint8Array(9);
   packet[0] = 0x7e; // Start marker
   packet[8] = 0xef; // End marker
@@ -40,9 +40,11 @@ export function buildLotusPacket(type: 'power' | 'color' | 'brightness' | 'mode'
       packet[1] = 0x00;
       packet[2] = 0x05;
       packet[3] = 0x03;
-      packet[4] = Math.max(0, Math.min(255, val1 || 0));
-      packet[5] = Math.max(0, Math.min(255, val2 || 0));
-      packet[6] = Math.max(0, Math.min(255, val3 || 0));
+      const channels: Record<'R' | 'G' | 'B', number> = { R: val1 || 0, G: val2 || 0, B: val3 || 0 };
+      const order = channelOrder.split('') as Array<'R' | 'G' | 'B'>;
+      packet[4] = Math.max(0, Math.min(255, channels[order[0]]));
+      packet[5] = Math.max(0, Math.min(255, channels[order[1]]));
+      packet[6] = Math.max(0, Math.min(255, channels[order[2]]));
       packet[7] = 0x00;
       break;
 

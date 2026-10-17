@@ -14,6 +14,8 @@ export type ActiveTab = 'color' | 'style' | 'music' | 'mic' | 'schedule' | 'devi
 
 export type AppTheme = 'dark' | 'light' | 'grey';
 
+export type RgbChannelOrder = 'RGB' | 'RBG' | 'GRB' | 'GBR' | 'BRG' | 'BGR';
+
 export interface DynamicMode {
   id: number;
   name: string;
