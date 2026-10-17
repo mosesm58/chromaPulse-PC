@@ -1,0 +1,171 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace;
+
+    /* Theme 1: Pitch Black (Dark Default) */
+    --theme-bg-main: #000000;
+    --theme-bg-sidebar: #08090d;
+    --theme-bg-header: #08090d;
+    --theme-bg-card: #0e1017;
+    --theme-bg-card-subtle: #141722;
+    --theme-border: #1c202e;
+    --theme-text-primary: #ffffff;
+    --theme-text-secondary: #94a3b8;
+    --theme-text-muted: #64748b;
+    --theme-slider-track: #1b2030;
+  }
+
+  /* Theme 2: Pure White (Light) */
+  .theme-light {
+    --theme-bg-main: #ffffff;
+    --theme-bg-sidebar: #f8fafc;
+    --theme-bg-header: #ffffff;
+    --theme-bg-card: #f8fafc;
+    --theme-bg-card-subtle: #f1f5f9;
+    --theme-border: #e2e8f0;
+    --theme-text-primary: #0f172a;
+    --theme-text-secondary: #334155;
+    --theme-text-muted: #64748b;
+    --theme-slider-track: #e2e8f0;
+    color: #0f172a;
+  }
+
+  .theme-light :is(h1, h2, h3, h4, p, span, label, button, div, li) {
+    --tw-text-opacity: 1;
+  }
+  .theme-light .text-white,
+  .theme-light .text-slate-100,
+  .theme-light .text-slate-200,
+  .theme-light .text-slate-300,
+  .theme-light .text-slate-400 {
+    color: #1e293b !important;
+  }
+
+  /* Theme 3: Graphite Slate (Grey) */
+  .theme-grey {
+    --theme-bg-main: #18191c;
+    --theme-bg-sidebar: #202225;
+    --theme-bg-header: #202225;
+    --theme-bg-card: #282b30;
+    --theme-bg-card-subtle: #2f3136;
+    --theme-border: #36393f;
+    --theme-text-primary: #f2f3f5;
+    --theme-text-secondary: #b9bbbe;
+    --theme-text-muted: #72767d;
+    --theme-slider-track: #36393f;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--theme-bg-main);
+    color: var(--theme-text-primary);
+    user-select: none;
+    overflow-x: hidden;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  .app-card {
+    background-color: var(--theme-bg-card);
+    border-color: var(--theme-border);
+    color: var(--theme-text-primary);
+  }
+
+  .app-card-subtle {
+    background-color: var(--theme-bg-card-subtle);
+    border-color: var(--theme-border);
+    color: var(--theme-text-primary);
+  }
+}
+
+/* Custom sleek hardware slider tracks and thumbs */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type='range']:focus {
+  outline: none;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  width: 18px;
+  border-radius: 9999px;
+  background: #ffffff;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.6), 0 2px 4px rgba(0, 0, 0, 0.4);
+  border: 2px solid #6366f1;
+  margin-top: -6px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+input[type='range']::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 16px rgba(99, 102, 241, 0.9), 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+input[type='range']::-webkit-slider-thumb:active {
+  transform: scale(1.05);
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--theme-slider-track);
+}
+
+/* Custom subtle scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.45);
+}
+
+/* Pulse glow aura keyframes */
+@keyframes chromaPulseAura {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 0.55;
+  }
+}
+
+.animate-pulse-aura {
+  animation: chromaPulseAura 4s ease-in-out infinite;
+}
+
+/* Strobe flash flashbang micro-effect */
+@keyframes strobeFlash {
+  0% {
+    filter: brightness(1.4) drop-shadow(0 0 20px rgba(255,255,255,0.8));
+  }
+  100% {
+    filter: brightness(1) drop-shadow(0 0 0px transparent);
+  }
+}
+
+.animate-strobe-pulse {
+  animation: strobeFlash 0.12s ease-out;
+}

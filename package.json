@@ -1,0 +1,59 @@
+{
+  "name": "chroma-pulse",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
+    "desktop:dev": "concurrently -k \"npm:dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "desktop:package": "npm run build && electron-builder --win=nsis --x64",
+    "preview": "vite preview",
+    "clean": "node -e \"for (const p of ['dist']) require('node:fs').rmSync(p, { recursive: true, force: true })\"",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "jszip": "^3.10.2",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "vite": "^8.3.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "electron": "^38.2.0",
+    "electron-builder": "^26.0.12",
+    "wait-on": "^8.0.4",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.4.21",
+    "esbuild": "^0.28.2",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.lotuslantern.pc",
+    "productName": "Chroma Pulse",
+    "directories": { "output": "release", "buildResources": "build" },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": { "target": ["nsis"], "icon": "build/icon.ico" },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "allowScripts": {
+    "electron": true,
+    "esbuild": true
+  }
+}
