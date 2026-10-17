@@ -1,36 +1,89 @@
-const { app, BrowserWindow, session, desktopCapturer, ipcMain } = require('electron');
+const { app, BrowserWindow, session, desktopCapturer, ipcMain, screen } = require('electron');
 const path = require('node:path');
 
 app.commandLine.appendSwitch('enable-experimental-web-platform-features');
 
 let ambilightTimer = null;
 let ambilightWindow = null;
+let ambilightRunId = 0;
+let lastAmbilightColor = null;
 ipcMain.handle('ambilight:start', async (event) => {
+  const runId = ++ambilightRunId;
   ambilightWindow = BrowserWindow.fromWebContents(event.sender);
-  if (ambilightTimer) clearInterval(ambilightTimer);
+  if (ambilightTimer) clearTimeout(ambilightTimer);
+  ambilightTimer = null;
+  lastAmbilightColor = null;
   const sample = async () => {
-    if (!ambilightWindow || ambilightWindow.isDestroyed()) return;
+    if (runId !== ambilightRunId || !ambilightWindow || ambilightWindow.isDestroyed()) return;
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 32, height: 18 } });
-      const image = sources[0]?.thumbnail;
-      if (!image || image.isEmpty()) return;
-      const { data, info } = await image.toBitmap();
-      let r=0, g=0, b=0, count=0;
-      for (let i=0; i<data.length; i+=4) {
-        const blue=data[i], green=data[i+1], red=data[i+2];
-        if ((red+green+blue)/3 > 18) { r+=red; g+=green; b+=blue; count++; }
+      if (!sources.length) throw new Error('Windows did not return a screen capture source.');
+      const primaryId = String(screen.getPrimaryDisplay().id);
+      const source = sources.find((item) => item.display_id === primaryId)
+        || sources.find((item) => item.id.startsWith(`screen:${primaryId}:`))
+        || sources[0];
+      const image = source?.thumbnail;
+      if (!image || image.isEmpty()) throw new Error('The primary display capture was empty.');
+      const data = image.toBitmap();
+      const colors = new Map();
+      let totalR = 0, totalG = 0, totalB = 0, pixels = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        // NativeImage.toBitmap is BGRA on Windows.
+        const b = data[i], g = data[i + 1], r = data[i + 2];
+        const key = `${r >> 4},${g >> 4},${b >> 4}`;
+        const bucket = colors.get(key) || { count: 0, r: 0, g: 0, b: 0 };
+        bucket.count++;
+        bucket.r += r;
+        bucket.g += g;
+        bucket.b += b;
+        colors.set(key, bucket);
+        totalR += r; totalG += g; totalB += b; pixels++;
       }
-      if (count) ambilightWindow.webContents.send('ambilight:color', { r:Math.round(r/count), g:Math.round(g/count), b:Math.round(b/count) });
-    } catch (error) { console.warn('Ambilight screen sampling failed:', error); }
+      if (runId !== ambilightRunId || !ambilightWindow || ambilightWindow.isDestroyed()) return;
+      let dominant = [...colors.values()].sort((a, b) => b.count - a.count)[0];
+      let color = dominant && dominant.count > pixels * 0.04
+        ? { r: Math.round(dominant.r / dominant.count), g: Math.round(dominant.g / dominant.count), b: Math.round(dominant.b / dominant.count) }
+        : { r: Math.round(totalR / pixels), g: Math.round(totalG / pixels), b: Math.round(totalB / pixels) };
+      if (lastAmbilightColor) {
+        color = {
+          r: Math.round(lastAmbilightColor.r * 0.3 + color.r * 0.7),
+          g: Math.round(lastAmbilightColor.g * 0.3 + color.g * 0.7),
+          b: Math.round(lastAmbilightColor.b * 0.3 + color.b * 0.7),
+        };
+      }
+      const changed = !lastAmbilightColor
+        || Math.max(Math.abs(color.r - lastAmbilightColor.r), Math.abs(color.g - lastAmbilightColor.g), Math.abs(color.b - lastAmbilightColor.b)) >= 4;
+      lastAmbilightColor = color;
+      if (changed) ambilightWindow.webContents.send('ambilight:color', color);
+    } catch (error) {
+      console.warn('Ambilight screen sampling failed:', error);
+      if (runId === ambilightRunId && !lastAmbilightColor) throw error;
+    } finally {
+      if (runId === ambilightRunId && ambilightWindow && !ambilightWindow.isDestroyed()) {
+        ambilightTimer = setTimeout(sample, 250);
+      }
+    }
   };
-  await sample();
-  ambilightTimer = setInterval(sample, 300);
+  try {
+    await sample();
+  } catch (error) {
+    if (runId === ambilightRunId) {
+      ++ambilightRunId;
+      if (ambilightTimer) clearTimeout(ambilightTimer);
+      ambilightTimer = null;
+      ambilightWindow = null;
+      lastAmbilightColor = null;
+    }
+    throw error;
+  }
   return true;
 });
 ipcMain.handle('ambilight:stop', () => {
-  if (ambilightTimer) clearInterval(ambilightTimer);
+  ++ambilightRunId;
+  if (ambilightTimer) clearTimeout(ambilightTimer);
   ambilightTimer = null;
   ambilightWindow = null;
+  lastAmbilightColor = null;
   return true;
 });
 
