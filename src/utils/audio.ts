@@ -61,7 +61,9 @@ class AudioManager {
         if (!this.audioSource) {
           this.audioSource = this.ctx.createMediaElementSource(element);
           this.audioSource.connect(this.analyser);
-          this.analyser.connect(this.ctx.destination);
+          // Keep local/demo playback audible without routing captured system
+          // audio back to the speakers through the analyser graph.
+          this.audioSource.connect(this.ctx.destination);
         }
       } catch (err) {
         // Element may already be connected

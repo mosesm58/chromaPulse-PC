@@ -46,6 +46,7 @@ export const MusicTab: React.FC<MusicTabProps> = ({
   const [customTrackName, setCustomTrackName] = useState<string | null>(null);
   const [musicMode, setMusicMode] = useState<'bass' | 'spectrum' | 'rhythm' | 'lounge'>('bass');
   const [systemAudioActive, setSystemAudioActive] = useState(false);
+  const [systemAudioMessage, setSystemAudioMessage] = useState('');
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -58,13 +59,18 @@ export const MusicTab: React.FC<MusicTabProps> = ({
       audioManager.stop();
       systemAudioStreamRef.current = null;
       setSystemAudioActive(false);
+      setSystemAudioMessage('Speaker sync stopped.');
       return;
     }
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true } as DisplayMediaStreamOptions);
-      if (!audioManager.bindDisplayAudio(stream)) throw new Error('The selected source did not provide audio.');
+      if (!stream.getAudioTracks().length || !audioManager.bindDisplayAudio(stream)) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error('Windows did not provide loopback audio. Check that this is the packaged desktop app, then try again.');
+      }
       systemAudioStreamRef.current = stream;
       setSystemAudioActive(true);
+      setSystemAudioMessage('Listening to Windows speaker output. Play Spotify or other audio to sync the LEDs.');
       stream.getTracks().forEach((track) => track.addEventListener('ended', () => {
         systemAudioStreamRef.current = null;
         setSystemAudioActive(false);
@@ -72,6 +78,8 @@ export const MusicTab: React.FC<MusicTabProps> = ({
       }, { once: true }));
       stream.getAudioTracks()[0]?.addEventListener('ended', () => setSystemAudioActive(false), { once: true });
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'System audio capture was cancelled or unavailable.';
+      setSystemAudioMessage(message);
       console.warn('System audio capture unavailable:', error);
     }
   };
@@ -232,6 +240,7 @@ export const MusicTab: React.FC<MusicTabProps> = ({
             </button>
           </div>
         </div>
+        {systemAudioMessage && <p className={`text-xs ${systemAudioActive ? 'text-emerald-400' : 'text-slate-400'}`}>{systemAudioMessage}</p>}
 
         {/* Real-time Frequency Spectrum Visualizer */}
         <div className="p-4 bg-[#0a0d14] rounded-xl border border-slate-800 space-y-2">

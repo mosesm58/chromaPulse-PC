@@ -1,7 +1,38 @@
-const { app, BrowserWindow, session, desktopCapturer } = require('electron');
+const { app, BrowserWindow, session, desktopCapturer, ipcMain } = require('electron');
 const path = require('node:path');
 
 app.commandLine.appendSwitch('enable-experimental-web-platform-features');
+
+let ambilightTimer = null;
+let ambilightWindow = null;
+ipcMain.handle('ambilight:start', async (event) => {
+  ambilightWindow = BrowserWindow.fromWebContents(event.sender);
+  if (ambilightTimer) clearInterval(ambilightTimer);
+  const sample = async () => {
+    if (!ambilightWindow || ambilightWindow.isDestroyed()) return;
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 32, height: 18 } });
+      const image = sources[0]?.thumbnail;
+      if (!image || image.isEmpty()) return;
+      const { data, info } = await image.toBitmap();
+      let r=0, g=0, b=0, count=0;
+      for (let i=0; i<data.length; i+=4) {
+        const blue=data[i], green=data[i+1], red=data[i+2];
+        if ((red+green+blue)/3 > 18) { r+=red; g+=green; b+=blue; count++; }
+      }
+      if (count) ambilightWindow.webContents.send('ambilight:color', { r:Math.round(r/count), g:Math.round(g/count), b:Math.round(b/count) });
+    } catch (error) { console.warn('Ambilight screen sampling failed:', error); }
+  };
+  await sample();
+  ambilightTimer = setInterval(sample, 300);
+  return true;
+});
+ipcMain.handle('ambilight:stop', () => {
+  if (ambilightTimer) clearInterval(ambilightTimer);
+  ambilightTimer = null;
+  ambilightWindow = null;
+  return true;
+});
 
 app.whenReady().then(() => {
   const { Menu } = require('electron');
@@ -28,7 +59,7 @@ app.whenReady().then(() => {
     minWidth: 1000,
     minHeight: 700,
     title: 'Chroma Pulse',
-    webPreferences: { contextIsolation: true, nodeIntegration: false }
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false }
   });
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   let pendingBluetoothCallback = null;
