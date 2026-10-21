@@ -89,6 +89,34 @@ export function isWebBluetoothSupported(): boolean {
   return typeof navigator !== 'undefined' && 'bluetooth' in (navigator as any);
 }
 
+/** Returns BLE devices this app has already been granted permission to access. */
+export async function getRememberedLotusBluetoothDevices(): Promise<WebBluetoothDevice[]> {
+  if (!isWebBluetoothSupported()) return [];
+  const nav = navigator as any;
+  if (typeof nav.bluetooth.getDevices !== 'function') return [];
+  const devices = await nav.bluetooth.getDevices() as WebBluetoothDevice[];
+  const prefixes = ['ELK', 'TRIONES', 'LOTUS', 'LED', 'BLE', 'QHM'];
+  return devices.filter((device) => !device.name || prefixes.some((prefix) => device.name!.toUpperCase().startsWith(prefix)));
+}
+
+export async function reconnectLotusBluetoothDevice(device: WebBluetoothDevice): Promise<{
+  device: WebBluetoothDevice;
+  characteristic: WebBluetoothCharacteristic | null;
+}> {
+  if (!device.gatt) return { device, characteristic: null };
+  const server = await device.gatt.connect();
+  let characteristic: WebBluetoothCharacteristic | null = null;
+  for (const serviceUuid of BLE_SERVICES) {
+    try {
+      const service = await server.getPrimaryService(serviceUuid);
+      const characteristics = await service.getCharacteristics();
+      characteristic = characteristics.find((c: WebBluetoothCharacteristic) => c.properties.write || c.properties.writeWithoutResponse) || null;
+      if (characteristic) break;
+    } catch { /* Try the next supported controller service. */ }
+  }
+  return { device, characteristic };
+}
+
 export async function requestLotusBluetoothDevice(): Promise<{
   device: WebBluetoothDevice;
   characteristic: WebBluetoothCharacteristic | null;

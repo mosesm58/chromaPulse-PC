@@ -64,6 +64,7 @@ export interface LedDevice {
   rssi: number; // -30 to -90 dBm
   isRealBluetooth?: boolean;
   bleDevice?: WebBluetoothDevice;
+  bleDeviceId?: string;
   bleCharacteristic?: WebBluetoothCharacteristic;
 }
 

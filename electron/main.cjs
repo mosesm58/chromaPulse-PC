@@ -115,6 +115,9 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(['bluetooth', 'media', 'audioCapture'].includes(permission));
   });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
+    return ['bluetooth', 'media', 'audioCapture'].includes(permission);
+  });
   // Windows loopback audio must be explicitly provided by Electron's
   // display-media handler; getDisplayMedia({audio:true}) alone is insufficient.
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {

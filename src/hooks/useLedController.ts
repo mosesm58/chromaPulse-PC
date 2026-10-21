@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { LOTUS_MODES } from '../data/modes';
 import { ActiveTab, DynamicMode, LedDevice, RgbChannelOrder, RgbColor, ScheduleItem } from '../types/led';
 import { AudioAnalysis } from '../utils/audio';
-import { buildLotusPacket, sendLotusPacket } from '../utils/bluetooth';
+import { buildLotusPacket, getRememberedLotusBluetoothDevices, reconnectLotusBluetoothDevice, sendLotusPacket } from '../utils/bluetooth';
 import { hexToRgb, hsvToRgb } from '../utils/color';
 
 const INITIAL_DEVICES: LedDevice[] = [
@@ -132,6 +132,8 @@ export function useLedController() {
     try {
       const savedDevices = devices.map(({ bleCharacteristic: _characteristic, ...device }) => ({
         ...device,
+        bleDeviceId: device.bleDevice?.id || device.bleDeviceId,
+        bleDevice: undefined,
         isRealBluetooth: false,
         isOnline: false,
       }));
@@ -141,6 +143,115 @@ export function useLedController() {
       console.warn('Could not save LED device settings:', error);
     }
   }, [devices, activeDeviceId]);
+
+  // Reconnect all previously authorized physical controllers on startup. Browsers
+  // only allow silent reconnect to devices the user paired with this app before.
+  useEffect(() => {
+    let cancelled = false;
+    const reconnectSavedDevices = async () => {
+      try {
+        // Give Chromium's Bluetooth adapter time to initialize after the window opens.
+        await new Promise((resolve) => window.setTimeout(resolve, 1200));
+        if (cancelled) return;
+        const available = typeof (navigator as any).bluetooth?.getAvailability === 'function'
+          ? await (navigator as any).bluetooth.getAvailability()
+          : true;
+        if (!available) {
+          console.info('Bluetooth auto-connect skipped: Bluetooth is unavailable or disabled.');
+          return;
+        }
+        const remembered = await getRememberedLotusBluetoothDevices();
+        console.info(`Bluetooth auto-connect found ${remembered.length} previously authorized device(s).`);
+        if (cancelled || remembered.length === 0) return;
+        const current = devicesRef.current;
+        const claimedIds = new Set<string>();
+        const connected: LedDevice[] = [];
+        for (const bluetoothDevice of remembered) {
+          if (cancelled) return;
+          const saved = current.find((device) => !claimedIds.has(device.id) && (
+            (device.bleDeviceId && device.bleDeviceId === bluetoothDevice.id) ||
+            (!device.bleDeviceId && device.name.toLowerCase() === (bluetoothDevice.name || '').toLowerCase())
+          ));
+          try {
+            let result: Awaited<ReturnType<typeof reconnectLotusBluetoothDevice>> | undefined;
+            for (let attempt = 1; attempt <= 3 && !result && !cancelled; attempt += 1) {
+              try {
+                result = await reconnectLotusBluetoothDevice(bluetoothDevice);
+              } catch (error) {
+                if (attempt === 3) throw error;
+                console.warn(`Bluetooth reconnect attempt ${attempt} failed for ${bluetoothDevice.name || 'LED'}; retrying.`, error);
+                await new Promise((resolve) => window.setTimeout(resolve, attempt * 900));
+              }
+            }
+            if (!result || cancelled) return;
+            if (cancelled) return;
+            const restored: LedDevice = {
+              ...(saved || {
+                id: `ble-${bluetoothDevice.id}`,
+                name: bluetoothDevice.name || 'Bluetooth LED',
+                location: 'Local Bluetooth Room',
+                type: 'strip',
+                hardwareType: 'whole-strip',
+                ledCount: 150,
+                isOnline: true,
+                power: true,
+                color: current.find((device) => device.id === activeDeviceId)?.color || { r: 255, g: 255, b: 255 },
+                brightness: 100,
+                colorTemp: 4000,
+                modeId: null,
+                speed: 60,
+                rssi: -58,
+              }),
+              id: saved?.id || `ble-${bluetoothDevice.id}`,
+              name: bluetoothDevice.name || saved?.name || 'Bluetooth LED',
+              isOnline: Boolean(result.characteristic),
+              isRealBluetooth: true,
+              bleDevice: bluetoothDevice,
+              bleDeviceId: bluetoothDevice.id,
+              bleCharacteristic: result.characteristic || undefined,
+            };
+            claimedIds.add(restored.id);
+            connected.push(restored);
+            console.info(`Bluetooth auto-connect ${result.characteristic ? 'connected' : 'reached device without a writable LED characteristic'}: ${restored.name}.`);
+          } catch (error) {
+            console.warn(`Could not reconnect to ${bluetoothDevice.name || 'Bluetooth LED'}:`, error);
+          }
+        }
+        if (cancelled || connected.length === 0) return;
+        const source = current.find((device) => device.id === activeDeviceId) || current[0];
+        const reconnecting = connected.length > 1;
+        setDevices((existing) => {
+          const replacements = new Map(connected.map((device) => [device.id, reconnecting && source ? {
+            ...device, color: source.color, brightness: source.brightness, modeId: source.modeId, speed: source.speed,
+          } : device]));
+          const updated = existing.map((device) => replacements.get(device.id) || device);
+          for (const device of connected) if (!existing.some((item) => item.id === device.id)) {
+            updated.push(replacements.get(device.id) || device);
+          }
+          return updated;
+        });
+        if (reconnecting) {
+          setAllSynced(true);
+          if (source) {
+            for (const device of connected) {
+              if (!device.bleCharacteristic) continue;
+              await sendLotusPacket(device.bleCharacteristic, buildLotusPacket('color', source.color.r, source.color.g, source.color.b, rgbChannelOrder));
+              await sendLotusPacket(device.bleCharacteristic, buildLotusPacket('brightness', source.brightness));
+              const mode = source.modeId === null ? undefined : LOTUS_MODES.find((item) => item.id === source.modeId);
+              if (mode && !mode.isSoftwareEngine) {
+                await sendLotusPacket(device.bleCharacteristic, buildLotusPacket('mode', source.modeId!));
+                await sendLotusPacket(device.bleCharacteristic, buildLotusPacket('speed', source.speed));
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('Could not restore Bluetooth LED connections:', error);
+      }
+    };
+    void reconnectSavedDevices();
+    return () => { cancelled = true; };
+  }, []);
 
   // Sound FX synthesizer
   const playClickSound = useCallback(
